@@ -73,18 +73,14 @@ owner_state(_).
  * Body: announces the current state of the owner and informs the personal assistant
 */
 @owner_state_plan
-+owner_state(State) : owner_state(OldState) & State \== OldState <-
++owner_state(State) : true <-
     .print("The owner is ", State);
     
     // Inform the personal assistant about the state change using KQML performative "inform"
-    .send(personal_assistant, tell, owner_state(State));
+    .send(personal_assistant, tell, owner_state(State)).
     
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "owner_state(State)").
-
-// If the state is the same as before, just log it without sending notifications
-+owner_state(State) : true <-
-    .print("The owner is still ", State).
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "owner_state(State)").
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }

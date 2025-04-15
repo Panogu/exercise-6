@@ -75,12 +75,11 @@ public class MQTTArtifact extends Artifact {
 
     @INTERNAL_OPERATION
     public void addMessage(String agent, String performative, String content){
-        // Add a new observable property for the received message
+        // Add a new observable property for the received message - not explicitly required in the task but useful for tracking
         int count = getObsProperty("messages_count").intValue();
-        String propName = "message_" + count;
         
         // Define a new observable property with the message details
-        defineObsProperty(propName, agent, performative, content);
+        defineObsProperty("message", agent, performative, content);
         
         // Update the message counter
         getObsProperty("messages_count").updateValue(count + 1);
@@ -111,7 +110,7 @@ public class MQTTArtifact extends Artifact {
         @Override
         public void messageArrived(String topic, MqttMessage message) throws Exception {
             String messageContent = new String(message.getPayload());
-            System.out.println("Message received: " + messageContent);
+            System.out.println("Message received (" + clientId + "): " + messageContent);
             
             // Parse the message content (agent,performative,content)
             String[] parts = messageContent.split(",");

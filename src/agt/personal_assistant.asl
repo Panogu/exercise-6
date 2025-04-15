@@ -1,7 +1,12 @@
 // personal assistant agent
 
 /* Initial beliefs */
-broadcast(jason).
+broadcast(mqtt).
+wakeup_in_progress(false).  // New belief to track wake-up status
+
+// Wake-up method preferences (lower rank = more preferred)
+wakeup_method("natural_light", 0).  // Natural light (lowest rank = most preferred)
+wakeup_method("artificial_light", 1). // Artificial light
 
 /* Initial goals */
 // The agent has the goal to start
@@ -40,38 +45,19 @@ broadcast(jason).
     sendMsg(Agent, Performative, Content).
 
 /*
- * General plan for sending messages
- * Usage: !send_message(Agent, Performative, Content)
- */
-+!send_message(Agent, Performative, Content) : true <-
-    !send_mqtt(Agent, Performative, Content).
-
-/*
- * Plan for broadcasting messages selectively
- * First tries Jason's broadcasting if broadcast(jason) is believed
- * Otherwise falls back to MQTT
- */
-+!broadcast_message(Performative, Content) : broadcast(jason) <-
-    .print("Broadcasting via Jason: ", Performative, " - ", Content);
-    .broadcast(tell, mqtt_message(Performative, Content)).
-    
-+!broadcast_message(Performative, Content) : not broadcast(jason) <-
-    .print("Broadcasting via MQTT: ", Performative, " - ", Content);
-    sendMsg("all", Performative, Content).
-
-/*
  * Plan for handling messages received via Jason's messaging system
  * This plan reacts to owner state changes from the wristband manager
  */
 +owner_state(State)[source(Source)] : true <-
     .print("Received owner state update from ", Source, ": ", State);
-    // Add appropriate reactions to different owner states
-    if (State == "awake") {
-        .print("Owner has woken up. Initiating wake-up sequence...");
-        !wake_up_sequence;
-    } elif (State == "asleep") {
-        .print("Owner has fallen asleep. Initiating sleep sequence...");
-        !sleep_sequence;
+    
+    // Check if there's a pending event that requires waking up the owner
+    if (current_event("now") & State == "asleep" & not wakeup_in_progress(true)) {
+        .print("Owner is asleep but has an event now. Starting wake-up routine...");
+        !initiate_wakeup;
+    } elif (current_event("now") & State == "awake") {
+        -+wakeup_in_progress(false);  // Reset wake-up status when owner wakes up
+        .print("Enjoy your event!");
     }.
 
 /*
@@ -80,11 +66,36 @@ broadcast(jason).
  */
 +upcoming_event(Event)[source(Source)] : true <-
     .print("Received calendar event update from ", Source, ": ", Event);
-    // Add appropriate reactions to different event states
+    // Store the current event state
+    -+current_event(Event);
+    
+    // If event is happening now, check if owner needs to be awakened
     if (Event == "now") {
-        .print("Event happening now! Alerting owner...");
-        !alert_owner_event;
+        !check_wakeup_need;
     }.
+
+/*
+ * Plan to check if the owner needs to be woken up
+ */
++!check_wakeup_need : owner_state("awake") & current_event("now") <-
+    .print("Enjoy your event!").
+    
++!check_wakeup_need : owner_state("asleep") & current_event("now") & not wakeup_in_progress(true) <-
+    .print("Starting wake-up routine...");
+    !initiate_wakeup.
+
++!check_wakeup_need : owner_state("asleep") & current_event("now") & wakeup_in_progress(true) <-
+    .print("Wake-up routine already in progress. Not starting another one.").
+
+// If we don't have info on owner state yet
++!check_wakeup_need : not owner_state(_) & current_event("now") & not wakeup_in_progress(true) <-
+    .print("Event is now but owner state is unknown. Waiting for wristband data...");
+    .wait(1000);  // Wait a bit and try again
+    !check_wakeup_need.
+    
+// If a wake-up is already in progress, don't keep checking
++!check_wakeup_need : not owner_state(_) & current_event("now") & wakeup_in_progress(true) <-
+    .print("Wake-up routine already initiated. Waiting for completion...").
 
 /*
  * Plan for handling messages received via Jason's messaging system
@@ -105,33 +116,106 @@ broadcast(jason).
     -+lights_state(Status).
 
 /*
- * Plan for wake-up sequence
- * This plan coordinates actions when the owner wakes up
+ * Plan for initiating the wake-up sequence using the Contract Net Protocol
+ * This selects the best method to wake up the user based on preferences
  */
-+!wake_up_sequence : true <-
-    .print("Executing wake-up sequence");
-    // Send messages to other agents to execute their parts of the sequence
-    .send(blinds_controller, achieve, raise_blinds);
-    .send(lights_controller, achieve, turn_on_lights).
++!initiate_wakeup : broadcast(jason) <-
+    -+wakeup_in_progress(true);  // Set wake-up status to in progress
+    .print("Broadcasting CFP via Jason for increasing illuminance in the room");
+    .broadcast(achieve, cfp(task("increase_illuminance")));
+    // Wait for proposals to come in
+    .wait(1000);
+    !evaluate_proposals.
+
++!initiate_wakeup : not broadcast(jason) <-
+    -+wakeup_in_progress(true);  // Set wake-up status to in progress
+    .wait(3000);
+    .print("Broadcasting CFP via MQTT for increasing illuminance in the room");
+    sendMsg("personal_assistant", "tell", "cfp(increase_illuminance)");
+    // Wait for proposals to come in (longer because MQTT might take longer)
+    .wait(3000);
+    !evaluate_proposals.
 
 /*
- * Plan for sleep sequence
- * This plan coordinates actions when the owner falls asleep
+ * Plan for evaluating proposals for increasing illuminance
  */
-+!sleep_sequence : true <-
-    .print("Executing sleep sequence");
-    // Send messages to other agents to execute their parts of the sequence
-    .send(blinds_controller, achieve, lower_blinds);
-    .send(lights_controller, achieve, turn_off_lights).
++!evaluate_proposals : true <-
+    .findall(proposal(Agent, Method, Rank), 
+             (proposal(Method)[source(Agent)] & wakeup_method(Method, Rank)),
+             Proposals);
+    
+    .print("Received proposals: ", Proposals);
+    
+    // Check if we have any proposals
+    if (.empty(Proposals)) {
+        .print("No proposals received. Cannot proceed with regular wake-up routine.");
+        -+wakeup_in_progress(false);  // Reset wake-up status if failed
+
+        // Send MQTT message to the user's friend
+        !send_mqtt("personal_assistant", "request_friend", "No proposals received for wake-up routine. Please wake up the user.");
+
+    } else {
+        // Sort proposals by rank (ascending)
+        .sort(Proposals, SortedProposals);
+        .print("Sorted proposals: ", SortedProposals);
+        
+        // Accept the best proposal (first in sorted list) and reject others
+        !handle_sorted_proposals(SortedProposals);
+    }.
 
 /*
- * Plan for alerting the owner about an upcoming event
+ * Plan for handling sorted proposals
+ * Accepts the first (best) proposal and rejects all others
  */
-+!alert_owner_event : true <-
-    .print("Alerting owner about upcoming event");
-    // In a real implementation, this might flash lights or make sounds
-    // For this exercise, we'll just send messages to the devices
-    .send(lights_controller, achieve, turn_on_lights).
++!handle_sorted_proposals([proposal(BestAgent, BestMethod, _)|RestProposals]) : true <-
+    .print("Accepting proposal from ", BestAgent, " to increase illuminance using ", BestMethod);
+    .send(BestAgent, tell, accept_proposal(task("increase_illuminance")));
+    
+    // Clear any existing proposals to prevent duplicates
+    .abolish(proposal(_)[source(_)]);
+    
+    // Reject all other proposals
+    !reject_other_proposals(RestProposals).
+
+// Base case for rejecting proposals - no more to reject
++!reject_other_proposals([]) : true <- true.
+
+// Recursive case for rejecting proposals
++!reject_other_proposals([proposal(Agent, Method, _)|Rest]) : true <-
+    .print("Rejecting proposal from ", Agent, " to increase illuminance using ", Method);
+    .send(Agent, tell, reject_proposal(task("increase_illuminance")));
+    !reject_other_proposals(Rest).
+
+/*
+ * Plans for handling task completion reports (specified in FIPA)
+ */
++inform_done(Task, Method)[source(Source)] : owner_state("asleep") & wakeup_in_progress(true) <-
+    .print("Task ", Task, " completed by ", Source, " using method: ", Method);
+    .print("User still asleep. Starting a new call for proposals...");
+    
+    // Start a new CFP
+    !initiate_wakeup.
+
+
++inform_done(Task, Method)[source(Source)] : owner_state("awake") <-
+    .print("Task ", Task, " completed by ", Source, " using method: ", Method);
+    .print("User has woken up. Wake-up routine successful!");
+    -+wakeup_in_progress(false).  // Reset wake-up status on success
+
+/*
+ * Plan for handling refuse messages
+ */
++refuse(Task, Reason)[source(Source)] : true <-
+    .print("Agent ", Source, " refused task ", Task, ". Reason: ", Reason).
+
+/*
+ * Plan for handling proposal messages received via Jason's messaging system
+ */
++proposal(Method)[source(Source)] : wakeup_in_progress(true) <-
+    .print("Received proposal from ", Source, " to increase illuminance using ", Method).
+    
++proposal(Method)[source(Source)] : not wakeup_in_progress(true) <-
+    .print("Received proposal from ", Source, " but no wake-up routine is active. Ignoring.").
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }

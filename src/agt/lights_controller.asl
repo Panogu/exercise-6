@@ -52,18 +52,26 @@ lights("off").
  * Plan for handling received MQTT messages
  * Triggered by changes in observable properties from the MQTTArtifact
  */
-+message_Count[artifact_id(ArtId)] : true <-
-    .print("Received a new MQTT message");
-    // Additional handling to be implemented in Task 4
-    .
++message(Source, Performative, Content)[artifact_id(ArtId)] : true <-
+    .print("Received MQTT message for ", Source, ": ", Performative, " - ", Content);
+    
+    // Check if the message is a CFP for increasing illuminance
+    if (Performative == "tell" & Content == "cfp(increase_illuminance)") {
+        .print("Received CFP via MQTT for increasing illuminance");
+        // Use the same CFP handling as with direct messaging
+        !cfp(task("increase_illuminance"))[source(Source)];
+    }.
 
-/*
- * Plan for handling direct Jason broadcast messages
- */
-+mqtt_message(Performative, Content)[source(Source)] : true <-
-    .print("Received Jason broadcast from ", Source, ": ", Performative, " - ", Content);
-    // Additional handling to be implemented in Task 4
-    .
++!handle_mqtt_acceptance(Source) : lights("off") <-
+    .print("Proposal accepted by ", Source, " via MQTT. Turning on lights to increase illuminance...");
+    // Execute the task
+    !turn_on_lights;
+    // Report task completion via MQTT
+    sendMsg(Source, "inform_done", "task(\"increase_illuminance\"),\"artificial_light\"").
+
++!handle_mqtt_acceptance(Source) : lights("on") <-
+    .print("Received acceptance via MQTT but lights are already on. Informing ", Source);
+    sendMsg(Source, "inform", "lights_already_on").
 
 /*
  * Plan for turning on the lights
@@ -71,18 +79,15 @@ lights("off").
  */
 +!turn_on_lights : lights("off") <-
     .print("Turning on the lights...");
-    invokeAction("Set the lights state", ["on"], Result);
-    .print("Lights turn on action result: ", Result);
+    invokeAction("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#SetState", ["on"]);
     -+lights("on");
+    .print("Lights are now on!");
     
     // Inform the personal assistant about the state change using KQML performative "tell"
-    .send(personal_assistant, tell, lights_status("on"));
+    .send(personal_assistant, tell, lights_status("on")).
     
-    // Also broadcast via Jason's internal mechanism
-    .broadcast(tell, lights_status("on"));
-    
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "lights_status(on)").
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "lights_status(on)").
 
 // If lights are already on, just acknowledge
 +!turn_on_lights : lights("on") <-
@@ -94,22 +99,52 @@ lights("off").
  */
 +!turn_off_lights : lights("on") <-
     .print("Turning off the lights...");
-    invokeAction("Set the lights state", ["off"], Result);
-    .print("Lights turn off action result: ", Result);
+    invokeAction("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#SetState", ["off"]);
     -+lights("off");
+    .print("Lights are now off!");
     
     // Inform the personal assistant about the state change using KQML performative "tell"
-    .send(personal_assistant, tell, lights_status("off"));
+    .send(personal_assistant, tell, lights_status("off")).
     
-    // Also broadcast via Jason's internal mechanism
-    .broadcast(tell, lights_status("off"));
-    
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "lights_status(off)").
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "lights_status(off)").
 
 // If lights are already off, just acknowledge
 +!turn_off_lights : lights("off") <-
     .print("Lights are already off.").
+
+/*
+ * Plan for handling Contract Net Protocol Call for Proposals (CFP)
+ * This responds with a proposal to increase illuminance using artificial light if lights are off
+ * Otherwise, it refuses to participate
+ */
++!cfp(task("increase_illuminance"))[source(Source)] : lights("off") <-
+    .print("Received CFP for increasing illuminance from ", Source);
+    // Propose to turn on lights to increase illuminance with artificial light
+    .send(Source, tell, proposal("artificial_light"));
+    .print("Sent proposal to increase illuminance using artificial light").
+
+// If lights are already on, refuse to participate
++!cfp(task("increase_illuminance"))[source(Source)] : lights("on") <-
+    .print("Received CFP for increasing illuminance from ", Source);
+    .print("Lights already on. Refusing to participate.");
+    .send(Source, tell, refuse(task("increase_illuminance"), "lights_already_on")).
+
+/*
+ * Plan for handling proposal acceptance
+ */
++accept_proposal(task("increase_illuminance"))[source(Source)] : lights("off") <-
+    .print("Proposal accepted by ", Source, ". Turning on lights to increase illuminance...");
+    // Execute the task
+    !turn_on_lights;
+    // Report task completion
+    .send(Source, tell, inform_done(task("increase_illuminance"), "artificial_light")).
+
+/*
+ * Plan for handling proposal rejection
+ */
++reject_proposal(task("increase_illuminance"))[source(Source)] : true <-
+    .print("Proposal rejected by ", Source, ". Standing by.").// lights controller agent
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }

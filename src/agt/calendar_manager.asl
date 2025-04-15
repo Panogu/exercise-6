@@ -66,9 +66,9 @@ td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#CalendarServic
     -+upcoming_event(Result);
     
     // If there's an upcoming event "now", notify other agents
-    if (Result == "now") {
+    if (.member("now", Result)) {
         .print("Upcoming event NOW! Notifying personal assistant...");
-        !notify_upcoming_event(Result);
+        !notify_upcoming_event("now");
     }
     
     // Check again after some time
@@ -82,10 +82,10 @@ td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#CalendarServic
     .print("Sending notification about upcoming event: ", Event);
     
     // Use KQML performative "inform" to tell the personal assistant about the event
-    .send(personal_assistant, tell, upcoming_event(Event));
+    .send(personal_assistant, tell, upcoming_event(Event)).
     
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "upcoming_event(now)").
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "upcoming_event(now)").
 
 // Failure handling for readProperty
 -!check_calendar[error(E)] : true <-

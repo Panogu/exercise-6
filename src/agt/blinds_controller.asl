@@ -29,41 +29,34 @@ blinds("lowered").
     .print("Created ThingArtifact for Blinds");
     
     // Create an MQTT artifact for communication
-    .my_name(Name);
-    .concat("mqtt_", Name, ArtifactName);
-    makeArtifact(ArtifactName, "room.MQTTArtifact", [Name], MqttId);
+    makeArtifact("mqtt", "room.MQTTArtifact", ["blinds_controller"], MqttId);
     focus(MqttId);
-    .print("Connected to MQTT broker as ", Name).
-
-// Failure handling plan for MQTT artifact creation
--!start[error(action_failed), error_msg(Msg), env_failure_reason(makeArtifactFailure("artifact_already_present", ArtName))] : 
-    td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#Blinds", Url) <-
-    .print("MQTT Artifact ", ArtName, " already exists. Focusing on existing artifact.");
-    lookupArtifact(ArtName, ArtId);
-    focus(ArtId);
-    .print("Connected to existing MQTT broker");
-    
-    // Create a ThingArtifact based on the TD
-    makeArtifact("blinds", "wot.ThingArtifact", [Url], BlindId);
-    focus(BlindId);
-    .print("Created ThingArtifact for Blinds").
+    .print("Blinds controller connected to MQTT broker").
 
 /*
  * Plan for handling received MQTT messages
  * Triggered by changes in observable properties from the MQTTArtifact
  */
-+message_Count[artifact_id(ArtId)] : true <-
-    .print("Received a new MQTT message");
-    // Additional handling to be implemented in Task 4
-    .
++message(Source, Performative, Content)[artifact_id(ArtId)] : true <-
+    .print("Received MQTT message from ", Source, ": ", Performative, " - ", Content);
+    
+    // Check if the message is a CFP for increasing illuminance
+    if (Performative == "tell" & Content == "cfp(increase_illuminance)") {
+        .print("Received CFP via MQTT for increasing illuminance");
+        // Use the same CFP handling as with direct messaging
+        !cfp(task("increase_illuminance"))[source(Source)];
+    }.
 
-/*
- * Plan for handling direct Jason broadcast messages
- */
-+mqtt_message(Performative, Content)[source(Source)] : true <-
-    .print("Received Jason broadcast from ", Source, ": ", Performative, " - ", Content);
-    // Additional handling to be implemented in Task 4
-    .
++!handle_mqtt_acceptance(Source) : blinds("lowered") <-
+    .print("Proposal accepted by ", Source, " via MQTT. Raising blinds to increase illuminance...");
+    // Execute the task
+    !raise_blinds;
+    // Report task completion via MQTT
+    sendMsg(Source, "inform_done", "task(\"increase_illuminance\"),\"natural_light\"").
+
++!handle_mqtt_acceptance(Source) : blinds("raised") <-
+    .print("Received acceptance via MQTT but blinds already raised. Informing ", Source);
+    sendMsg(Source, "inform", "blinds_already_raised").
 
 /*
  * Plan for raising the blinds
@@ -71,18 +64,15 @@ blinds("lowered").
  */
 +!raise_blinds : blinds("lowered") <-
     .print("Raising the blinds...");
-    invokeAction("Set the blinds state", ["raised"], Result);
-    .print("Blinds raise action result: ", Result);
+    invokeAction("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#SetState", ["raised"]);
     -+blinds("raised");
+    .print("Blinds raised!");
     
     // Inform the personal assistant about the state change using KQML performative "tell"
-    .send(personal_assistant, tell, blinds_status("raised"));
+    .send(personal_assistant, tell, blinds_status("raised")).
     
-    // Also broadcast via Jason's internal mechanism
-    .broadcast(tell, blinds_status("raised"));
-    
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "blinds_status(raised)").
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "blinds_status(raised)").
 
 // If blinds are already raised, just acknowledge
 +!raise_blinds : blinds("raised") <-
@@ -94,22 +84,52 @@ blinds("lowered").
  */
 +!lower_blinds : blinds("raised") <-
     .print("Lowering the blinds...");
-    invokeAction("Set the blinds state", ["lowered"], Result);
-    .print("Blinds lower action result: ", Result);
+    invokeAction("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#SetState", ["lowered"]);
     -+blinds("lowered");
+    .print("Blinds lowered!");
     
     // Inform the personal assistant about the state change using KQML performative "tell"
-    .send(personal_assistant, tell, blinds_status("lowered"));
+    .send(personal_assistant, tell, blinds_status("lowered")).
     
-    // Also broadcast via Jason's internal mechanism
-    .broadcast(tell, blinds_status("lowered"));
-    
-    // Also send via MQTT as a backup communication channel
-    sendMsg("personal_assistant", "inform", "blinds_status(lowered)").
+    // Send message via MQTT
+    // sendMsg("personal_assistant", "inform", "blinds_status(lowered)").
 
 // If blinds are already lowered, just acknowledge
 +!lower_blinds : blinds("lowered") <-
     .print("Blinds are already lowered.").
+
+/*
+ * Plan for handling Contract Net Protocol Call for Proposals (CFP)
+ * This responds with a proposal to increase illuminance using natural light if blinds are lowered
+ * Otherwise, it refuses to participate
+ */
++!cfp(task("increase_illuminance"))[source(Source)] : blinds("lowered") <-
+    .print("Received CFP for increasing illuminance from ", Source);
+    // Propose to raise blinds to increase illuminance with natural light
+    .send(Source, tell, proposal("natural_light"));
+    .print("Sent proposal to increase illuminance using natural light").
+
+// If blinds are already raised, refuse to participate
++!cfp(task("increase_illuminance"))[source(Source)] : blinds("raised") <-
+    .print("Received CFP for increasing illuminance from ", Source);
+    .print("Blinds already raised. Refusing to participate.");
+    .send(Source, tell, refuse(task("increase_illuminance"), "blinds_already_raised")).
+
+/*
+ * Plan for handling proposal acceptance
+ */
++accept_proposal(task("increase_illuminance"))[source(Source)] : blinds("lowered") <-
+    .print("Proposal accepted by ", Source, ". Raising blinds to increase illuminance...");
+    // Execute the task
+    !raise_blinds;
+    // Report task completion
+    .send(Source, tell, inform_done(task("increase_illuminance"), "natural_light")).
+
+/*
+ * Plan for handling proposal rejection
+ */
++reject_proposal(task("increase_illuminance"))[source(Source)] : true <-
+    .print("Proposal rejected by ", Source, ". Standing by.").// blinds controller agent
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }
