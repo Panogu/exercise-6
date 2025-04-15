@@ -24,7 +24,7 @@ lights("off").
     .print("Using Thing Description at: ", Url);
     
     // Create a ThingArtifact based on the TD
-    makeArtifact("lights", "wot.ThingArtifact", [Url], LightId);
+    makeArtifact("lights", "org.hyperagents.jacamo.artifacts.wot.ThingArtifact", [Url], LightId);
     focus(LightId);
     .print("Created ThingArtifact for Lights");
     
@@ -74,7 +74,15 @@ lights("off").
     invokeAction("Set the lights state", ["on"], Result);
     .print("Lights turn on action result: ", Result);
     -+lights("on");
-    .broadcast(tell, lights_status("on")).
+    
+    // Inform the personal assistant about the state change using KQML performative "tell"
+    .send(personal_assistant, tell, lights_status("on"));
+    
+    // Also broadcast via Jason's internal mechanism
+    .broadcast(tell, lights_status("on"));
+    
+    // Also send via MQTT as a backup communication channel
+    sendMsg("personal_assistant", "inform", "lights_status(on)").
 
 // If lights are already on, just acknowledge
 +!turn_on_lights : lights("on") <-
@@ -89,7 +97,15 @@ lights("off").
     invokeAction("Set the lights state", ["off"], Result);
     .print("Lights turn off action result: ", Result);
     -+lights("off");
-    .broadcast(tell, lights_status("off")).
+    
+    // Inform the personal assistant about the state change using KQML performative "tell"
+    .send(personal_assistant, tell, lights_status("off"));
+    
+    // Also broadcast via Jason's internal mechanism
+    .broadcast(tell, lights_status("off"));
+    
+    // Also send via MQTT as a backup communication channel
+    sendMsg("personal_assistant", "inform", "lights_status(off)").
 
 // If lights are already off, just acknowledge
 +!turn_off_lights : lights("off") <-

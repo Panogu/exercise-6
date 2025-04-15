@@ -24,7 +24,7 @@ blinds("lowered").
     .print("Using Thing Description at: ", Url);
     
     // Create a ThingArtifact based on the TD
-    makeArtifact("blinds", "wot.ThingArtifact", [Url], BlindId);
+    makeArtifact("blinds", "org.hyperagents.jacamo.artifacts.wot.ThingArtifact", [Url], BlindId);
     focus(BlindId);
     .print("Created ThingArtifact for Blinds");
     
@@ -74,7 +74,15 @@ blinds("lowered").
     invokeAction("Set the blinds state", ["raised"], Result);
     .print("Blinds raise action result: ", Result);
     -+blinds("raised");
-    .broadcast(tell, blinds_status("raised")).
+    
+    // Inform the personal assistant about the state change using KQML performative "tell"
+    .send(personal_assistant, tell, blinds_status("raised"));
+    
+    // Also broadcast via Jason's internal mechanism
+    .broadcast(tell, blinds_status("raised"));
+    
+    // Also send via MQTT as a backup communication channel
+    sendMsg("personal_assistant", "inform", "blinds_status(raised)").
 
 // If blinds are already raised, just acknowledge
 +!raise_blinds : blinds("raised") <-
@@ -89,7 +97,15 @@ blinds("lowered").
     invokeAction("Set the blinds state", ["lowered"], Result);
     .print("Blinds lower action result: ", Result);
     -+blinds("lowered");
-    .broadcast(tell, blinds_status("lowered")).
+    
+    // Inform the personal assistant about the state change using KQML performative "tell"
+    .send(personal_assistant, tell, blinds_status("lowered"));
+    
+    // Also broadcast via Jason's internal mechanism
+    .broadcast(tell, blinds_status("lowered"));
+    
+    // Also send via MQTT as a backup communication channel
+    sendMsg("personal_assistant", "inform", "blinds_status(lowered)").
 
 // If blinds are already lowered, just acknowledge
 +!lower_blinds : blinds("lowered") <-

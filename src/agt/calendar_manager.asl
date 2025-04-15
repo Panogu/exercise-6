@@ -22,7 +22,7 @@ td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#CalendarServic
     .print("Using Thing Description at: ", Url);
     
     // Create a ThingArtifact based on the TD
-    makeArtifact("calendar", "wot.ThingArtifact", [Url], CalId);
+    makeArtifact("calendar", "org.hyperagents.jacamo.artifacts.wot.ThingArtifact", [Url], CalId);
     focus(CalId);
     .print("Created ThingArtifact for Calendar Service");
     
@@ -80,6 +80,11 @@ td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#CalendarServic
  */
 +!notify_upcoming_event(Event) : true <-
     .print("Sending notification about upcoming event: ", Event);
+    
+    // Use KQML performative "inform" to tell the personal assistant about the event
+    .send(personal_assistant, tell, upcoming_event(Event));
+    
+    // Also send via MQTT as a backup communication channel
     sendMsg("personal_assistant", "inform", "upcoming_event(now)").
 
 // Failure handling for readProperty
