@@ -22,20 +22,31 @@ blinds("lowered").
 +!start : td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#Blinds", Url) <-
     .print("Blinds Controller starting up...");
     .print("Using Thing Description at: ", Url);
+    
+    // Create a ThingArtifact based on the TD
+    makeArtifact("blinds", "wot.ThingArtifact", [Url], BlindId);
+    focus(BlindId);
+    .print("Created ThingArtifact for Blinds");
+    
+    // Create an MQTT artifact for communication
     .my_name(Name);
     .concat("mqtt_", Name, ArtifactName);
-    // Try to create the artifact, or focus on it if it already exists
     makeArtifact(ArtifactName, "room.MQTTArtifact", [Name], MqttId);
     focus(MqttId);
     .print("Connected to MQTT broker as ", Name).
 
-// Failure handling plan for artifact creation
+// Failure handling plan for MQTT artifact creation
 -!start[error(action_failed), error_msg(Msg), env_failure_reason(makeArtifactFailure("artifact_already_present", ArtName))] : 
     td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#Blinds", Url) <-
-    .print("Artifact ", ArtName, " already exists. Focusing on existing artifact.");
+    .print("MQTT Artifact ", ArtName, " already exists. Focusing on existing artifact.");
     lookupArtifact(ArtName, ArtId);
     focus(ArtId);
-    .print("Connected to existing MQTT broker").
+    .print("Connected to existing MQTT broker");
+    
+    // Create a ThingArtifact based on the TD
+    makeArtifact("blinds", "wot.ThingArtifact", [Url], BlindId);
+    focus(BlindId);
+    .print("Created ThingArtifact for Blinds").
 
 /*
  * Plan for handling received MQTT messages
@@ -53,6 +64,36 @@ blinds("lowered").
     .print("Received Jason broadcast from ", Source, ": ", Performative, " - ", Content);
     // Additional handling to be implemented in Task 4
     .
+
+/*
+ * Plan for raising the blinds
+ * This plan invokes the SetState action on the blinds with "raised" input
+ */
++!raise_blinds : blinds("lowered") <-
+    .print("Raising the blinds...");
+    invokeAction("Set the blinds state", ["raised"], Result);
+    .print("Blinds raise action result: ", Result);
+    -+blinds("raised");
+    .broadcast(tell, blinds_status("raised")).
+
+// If blinds are already raised, just acknowledge
++!raise_blinds : blinds("raised") <-
+    .print("Blinds are already raised.").
+
+/*
+ * Plan for lowering the blinds
+ * This plan invokes the SetState action on the blinds with "lowered" input
+ */
++!lower_blinds : blinds("raised") <-
+    .print("Lowering the blinds...");
+    invokeAction("Set the blinds state", ["lowered"], Result);
+    .print("Blinds lower action result: ", Result);
+    -+blinds("lowered");
+    .broadcast(tell, blinds_status("lowered")).
+
+// If blinds are already lowered, just acknowledge
++!lower_blinds : blinds("lowered") <-
+    .print("Blinds are already lowered.").
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }

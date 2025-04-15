@@ -22,20 +22,31 @@ lights("off").
 +!start : td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#Lights", Url) <-
     .print("Lights Controller starting up...");
     .print("Using Thing Description at: ", Url);
+    
+    // Create a ThingArtifact based on the TD
+    makeArtifact("lights", "wot.ThingArtifact", [Url], LightId);
+    focus(LightId);
+    .print("Created ThingArtifact for Lights");
+    
+    // Create an MQTT artifact for communication
     .my_name(Name);
     .concat("mqtt_", Name, ArtifactName);
-    // Try to create the artifact, or focus on it if it already exists
     makeArtifact(ArtifactName, "room.MQTTArtifact", [Name], MqttId);
     focus(MqttId);
     .print("Connected to MQTT broker as ", Name).
 
-// Failure handling plan for artifact creation
+// Failure handling plan for MQTT artifact creation
 -!start[error(action_failed), error_msg(Msg), env_failure_reason(makeArtifactFailure("artifact_already_present", ArtName))] : 
     td("https://was-course.interactions.ics.unisg.ch/wake-up-ontology#Lights", Url) <-
-    .print("Artifact ", ArtName, " already exists. Focusing on existing artifact.");
+    .print("MQTT Artifact ", ArtName, " already exists. Focusing on existing artifact.");
     lookupArtifact(ArtName, ArtId);
     focus(ArtId);
-    .print("Connected to existing MQTT broker").
+    .print("Connected to existing MQTT broker");
+    
+    // Create a ThingArtifact based on the TD
+    makeArtifact("lights", "wot.ThingArtifact", [Url], LightId);
+    focus(LightId);
+    .print("Created ThingArtifact for Lights").
 
 /*
  * Plan for handling received MQTT messages
@@ -53,6 +64,36 @@ lights("off").
     .print("Received Jason broadcast from ", Source, ": ", Performative, " - ", Content);
     // Additional handling to be implemented in Task 4
     .
+
+/*
+ * Plan for turning on the lights
+ * This plan invokes the SetState action on the lights with "on" input
+ */
++!turn_on_lights : lights("off") <-
+    .print("Turning on the lights...");
+    invokeAction("Set the lights state", ["on"], Result);
+    .print("Lights turn on action result: ", Result);
+    -+lights("on");
+    .broadcast(tell, lights_status("on")).
+
+// If lights are already on, just acknowledge
++!turn_on_lights : lights("on") <-
+    .print("Lights are already on.").
+
+/*
+ * Plan for turning off the lights
+ * This plan invokes the SetState action on the lights with "off" input
+ */
++!turn_off_lights : lights("on") <-
+    .print("Turning off the lights...");
+    invokeAction("Set the lights state", ["off"], Result);
+    .print("Lights turn off action result: ", Result);
+    -+lights("off");
+    .broadcast(tell, lights_status("off")).
+
+// If lights are already off, just acknowledge
++!turn_off_lights : lights("off") <-
+    .print("Lights are already off.").
 
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }
